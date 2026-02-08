@@ -1,0 +1,16 @@
+ 00000000          // Program start address (PC = 0)
+
+ 00500093          // ADDI x1, x0, 5
+                  // Load immediate value 5 into register x1 (x1 = 5)
+
+ 00308113          // ADDI x2, x1, 3
+                  // Add 3 to x1 and store result in x2 (x2 = 8)
+
+ 002081B3          // ADD x3, x1, x2
+                  // Add x1 and x2 and store result in x3 (x3 = 13)
+
+ 00000063          // BEQ x0, x0, 0
+                  // Always-true branch, creates an infinite loop (program end)
+
+
+
