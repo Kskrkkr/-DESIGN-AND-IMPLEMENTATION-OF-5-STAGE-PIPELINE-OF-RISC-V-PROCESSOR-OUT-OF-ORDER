@@ -58,6 +58,24 @@ RISC-V RV32 ISA – Target instruction set
 ***
 
 **Repository Structure**
+## 
+
+## Repository Structure
+
+```text
+RISC-V-Out-of-Order-Pipeline-Processor/
+├── rtl/
+│   ├── frontend/        # IF, ID
+│   ├── rename_issue/    # RAT, Free List, Issue Queue
+│   ├── execute/         # ALU, Branch Unit
+│   ├── commit/          # ROB
+│   ├── memory/          # LSU, Cache, Memory system
+│   └── top/             # Core top module
+├── tb/
+│   └── tb_core.sv       # Testbench
+├── sim/
+│   └── run.do           # QuestaSim script
+└── README.md
 
 RISC-V-Out-of-Order-Pipeline-Processor/
 ├── rtl/
@@ -72,6 +90,7 @@ RISC-V-Out-of-Order-Pipeline-Processor/
 ├── sim/
 │   └── run.do           # QuestaSim script
 └── README.md
+
 ***
 
 **How to Run**
