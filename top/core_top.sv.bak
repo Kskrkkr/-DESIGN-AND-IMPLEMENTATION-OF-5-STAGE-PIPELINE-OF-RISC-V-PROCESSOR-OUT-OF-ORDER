@@ -1,0 +1,292 @@
+module core_top (
+    input  logic clk,
+    input  logic rst
+);
+
+    /* =====================================================
+       PARAMETERS
+       ===================================================== */
+    localparam RS_SIZE  = 8;
+    localparam ROB_SIZE = 16;
+    localparam ROB_BITS = $clog2(ROB_SIZE);
+
+    /* =====================================================
+       IF / ID
+       ===================================================== */
+    logic [31:0] pc, inst;
+    logic [6:0]  opcode;
+    logic [4:0]  rs1, rs2, rd;
+    logic [31:0] id_imm;
+    logic        id_use_imm;
+    logic        is_branch;
+
+    /* =====================================================
+       CONTROL (NO BRANCH YET)
+       ===================================================== */
+    logic        flush;
+    logic [31:0] redirect_pc;
+    assign flush       = 1'b0;
+    assign redirect_pc = 32'b0;
+
+    /* =====================================================
+       RENAME / FREELIST
+       ===================================================== */
+    logic [5:0] rs1_phys, rs2_phys;
+    logic [5:0] rd_phys, old_phys;
+    logic       alloc_valid;
+
+    /* =====================================================
+       DISPATCH CONTROL (FIXED)
+       ===================================================== */
+    logic alloc_req;     // request freelist
+    logic rename_fire;  // fire rename/ROB/RS (1 cycle later)
+
+    assign alloc_req   = (rd != 0);
+    assign rename_fire = alloc_valid && (rd != 0);
+
+    /* =====================================================
+       REGISTERED RENAME VALUES
+       ===================================================== */
+    logic [5:0] rd_phys_r, old_phys_r;
+
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            rd_phys_r  <= '0;
+            old_phys_r <= '0;
+        end else if (rename_fire) begin
+            rd_phys_r  <= rd_phys;
+            old_phys_r <= old_phys;
+        end
+    end
+
+    /* =====================================================
+       RESERVATION STATION
+       ===================================================== */
+    logic        rs_issue_valid;
+    logic [5:0]  issue_src1, issue_src2, issue_dst;
+    logic        issue_use_imm;
+    logic [31:0] issue_imm;
+    logic        alu_grant;
+    logic [$clog2(RS_SIZE)-1:0] issue_idx;
+
+    /* =====================================================
+       PRF
+       ===================================================== */
+    logic [31:0] prf_rdata1, prf_rdata2;
+    logic        prf_we;
+    logic [5:0]  prf_waddr;
+    logic [31:0] prf_wdata;
+    logic        prf_valid1, prf_valid2;
+
+    /* =====================================================
+       EXEC / WB
+       ===================================================== */
+    logic        ex_valid;
+    logic [31:0] ex_a, ex_b;
+    logic [5:0]  ex_dst;
+    logic [ROB_BITS-1:0] ex_rob_idx;
+
+    logic        wb_valid_r;
+    logic [5:0]  wb_phys_r;
+    logic [31:0] wb_data_r;
+
+    /* =====================================================
+       ROB
+       ===================================================== */
+    logic        commit_valid;
+    logic [4:0]  commit_rd_arch;
+    logic [5:0]  free_phys;
+    logic [ROB_BITS-1:0] rob_alloc_idx;
+
+    /* =====================================================
+       IF STAGE
+       ===================================================== */
+    if_stage u_if (
+        .clk(clk),
+        .rst(rst),
+        .flush(flush),
+        .redirect_pc(redirect_pc),
+        .pc_out(pc),
+        .inst_out(inst)
+    );
+
+    /* =====================================================
+       ID STAGE
+       ===================================================== */
+    id_stage u_id (
+        .inst(inst),
+        .opcode(opcode),
+        .rs1(rs1),
+        .rs2(rs2),
+        .rd(rd),
+        .imm(id_imm),
+        .use_imm(id_use_imm),
+        .is_branch(is_branch)
+    );
+
+    /* =====================================================
+       FREELIST  (REQUEST ONLY)
+       ===================================================== */
+    freelist u_freelist (
+        .clk(clk),
+        .rst(rst || flush),
+        .alloc_en(alloc_req),
+        .alloc_reg(rd_phys),
+        .alloc_valid(alloc_valid),
+        .free_en(commit_valid),
+        .free_reg(free_phys)
+    );
+
+    /* =====================================================
+       RAT (FIRES ONLY WHEN rd_phys IS VALID)
+       ===================================================== */
+    rat u_rat (
+        .clk(clk),
+        .rst(rst || flush),
+        .rs1_arch(rs1),
+        .rs2_arch(rs2),
+        .rs1_phys(rs1_phys),
+        .rs2_phys(rs2_phys),
+        .rename_en(rename_fire),
+        .rd_arch(rd),
+        .rd_phys(rd_phys),
+        .old_phys(old_phys)
+    );
+
+    /* =====================================================
+       ROB (FIRES 1 CYCLE AFTER FREELIST)
+       ===================================================== */
+    rob u_rob (
+        .clk(clk),
+        .rst(rst || flush),
+
+        .alloc_en(rename_fire),
+        .rd_arch(rd),
+        .rd_phys(rd_phys_r),
+        .old_phys(old_phys_r),
+        .alloc_idx(rob_alloc_idx),
+
+        .wb_en(prf_we),
+        .wb_idx(ex_rob_idx),
+
+        .commit_valid(commit_valid),
+        .commit_rd_arch(commit_rd_arch),
+        .free_phys(free_phys)
+    );
+
+    /* =====================================================
+       RS READY
+       ===================================================== */
+    logic src1_ready, src2_ready;
+    assign src1_ready = (rs1_phys == 0) ? 1'b1 : prf_valid1;
+    assign src2_ready = (rs2_phys == 0) ? 1'b1 : prf_valid2;
+
+    /* =====================================================
+       RESERVATION STATION
+       ===================================================== */
+    reservation_station u_rs (
+        .clk(clk),
+        .rst(rst || flush),
+
+        .dispatch_en(rename_fire),
+        .src1(rs1_phys),
+        .src2(rs2_phys),
+        .dst(rd_phys_r),
+        .src1_ready(src1_ready),
+        .src2_ready(src2_ready),
+        .use_imm(id_use_imm),
+        .imm(id_imm),
+
+        .wb_valid(wb_valid_r),
+        .wb_phys(wb_phys_r),
+
+        .issue_grant(alu_grant),
+
+        .issue_valid(rs_issue_valid),
+        .issue_src1(issue_src1),
+        .issue_src2(issue_src2),
+        .issue_dst(issue_dst),
+        .issue_use_imm(issue_use_imm),
+        .issue_imm(issue_imm),
+        .issue_idx(issue_idx)
+    );
+
+    /* =====================================================
+       ISSUE LOGIC
+       ===================================================== */
+    issue_logic u_issue (
+        .rs_issue_valid(rs_issue_valid),
+        .alu_grant(alu_grant)
+    );
+
+    /* =====================================================
+       PRF
+       ===================================================== */
+    phys_regfile u_prf (
+        .clk(clk),
+        .rst(rst),
+        .we(prf_we),
+        .waddr(prf_waddr),
+        .wdata(prf_wdata),
+        .raddr1(issue_src1),
+        .raddr2(issue_src2),
+        .rdata1(prf_rdata1),
+        .rdata2(prf_rdata2),
+        .valid1(prf_valid1),
+        .valid2(prf_valid2)
+    );
+
+    /* =====================================================
+       EXEC PIPELINE
+       ===================================================== */
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            ex_valid   <= 1'b0;
+            ex_a       <= '0;
+            ex_b       <= '0;
+            ex_dst     <= '0;
+            ex_rob_idx <= '0;
+        end else begin
+            ex_valid <= alu_grant;
+            if (alu_grant) begin
+                ex_a       <= prf_rdata1;
+                ex_b       <= issue_use_imm ? issue_imm : prf_rdata2;
+                ex_dst     <= issue_dst;
+                ex_rob_idx <= rob_alloc_idx;
+            end
+        end
+    end
+
+    /* =====================================================
+       ALU
+       ===================================================== */
+    logic [31:0] alu_out;
+    alu u_alu (
+        .clk(clk),
+        .grant(ex_valid),
+        .a(ex_a),
+        .b(ex_b),
+        .alu_op(4'b0000),
+        .result(alu_out)
+    );
+
+    /* =====================================================
+       WRITEBACK
+       ===================================================== */
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            wb_valid_r <= 1'b0;
+            wb_phys_r  <= '0;
+            wb_data_r  <= '0;
+        end else begin
+            wb_valid_r <= ex_valid;
+            wb_phys_r  <= ex_dst;
+            wb_data_r  <= alu_out;
+        end
+    end
+
+    assign prf_we    = wb_valid_r && (wb_phys_r != 0);
+    assign prf_waddr = wb_phys_r;
+    assign prf_wdata = wb_data_r;
+
+endmodule
