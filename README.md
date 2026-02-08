@@ -78,6 +78,7 @@ RISC-V-Out-of-Order-Pipeline-Processor/
 ├── tb/
 ├── sim/
 └── README.md
+```
 
 
 ## How to Run
@@ -86,7 +87,8 @@ Navigate to the project directory
 Run:
 do sim/run.do
 Inspect waveforms for pipeline and OoO behavior
-Future Work
+
+**Future Work**
 Full RV32I ISA support
 Complete LSQ with forwarding
 Instruction/Data caches
