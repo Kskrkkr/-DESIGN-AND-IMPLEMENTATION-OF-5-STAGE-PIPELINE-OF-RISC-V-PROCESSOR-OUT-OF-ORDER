@@ -56,8 +56,6 @@ QuestaSim (Siemens EDA) – Simulation and debugging
 RISC-V RV32 ISA – Target instruction set
 
 ***
-
-**Repository Structure**
 ## 
 
 ## Repository Structure
