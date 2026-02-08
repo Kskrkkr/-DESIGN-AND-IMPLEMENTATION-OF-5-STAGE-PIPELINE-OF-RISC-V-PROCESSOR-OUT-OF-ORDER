@@ -72,7 +72,6 @@ RISC-V-Out-of-Order-Pipeline-Processor/
 ├── sim/
 │   └── run.do           # QuestaSim script
 └── README.md
-
 ***
 
 **How to Run**
